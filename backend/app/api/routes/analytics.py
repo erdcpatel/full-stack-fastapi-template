@@ -25,6 +25,8 @@ def _generate_dataset(n: int = 600) -> pl.DataFrame:
     categories = ["AI Inference", "Cloud Compute", "Managed DB", "Storage", "CDN & Network"]
     regions = ["US-East", "US-West", "EU-Central", "AP-South", "AP-East"]
     statuses = ["Completed", "Processing", "Failed", "Refunded"]
+    tiers = ["Enterprise", "Growth", "Startup"]
+    channels = ["Stripe API", "Wire Transfer", "ACH Direct", "Crypto / USDC", "Cloud Direct"]
     clients = [
         "Acme Corp", "TechNova", "Starlight AI", "Globex", "Initech",
         "CyberDyne", "Umbrella Bio", "Soylent", "Massive Dynamic", "Hooli",
@@ -38,6 +40,9 @@ def _generate_dataset(n: int = 600) -> pl.DataFrame:
         category = random.choice(categories)
         region = random.choice(regions)
         status_val = random.choices(statuses, weights=[0.75, 0.12, 0.08, 0.05])[0]
+        tier = random.choices(tiers, weights=[0.40, 0.35, 0.25])[0]
+        channel = random.choice(channels)
+        cluster = f"{region.lower().replace('-', '')}-c{random.randint(1, 4)}"
         
         base_price = {
             "AI Inference": random.uniform(200, 3500),
@@ -46,15 +51,21 @@ def _generate_dataset(n: int = 600) -> pl.DataFrame:
             "Storage": random.uniform(40, 1200),
             "CDN & Network": random.uniform(30, 850),
         }[category]
+        amount = round(base_price, 2)
+        fee = round(amount * 0.025, 2)
 
         data.append({
             "id": f"TXN-{10000 + i}",
             "timestamp": created.strftime("%Y-%m-%d %H:%M"),
             "customer": f"{random.choice(clients)} #{random.randint(10, 99)}",
+            "tier": tier,
             "category": category,
+            "channel": channel,
+            "cluster": cluster,
             "region": region,
             "status": status_val,
-            "amount": round(base_price, 2),
+            "fee": fee,
+            "amount": amount,
             "duration_ms": random.randint(35, 1200),
         })
     return pl.DataFrame(data)
@@ -75,7 +86,7 @@ async def get_analytics_grid(
     sort_by: str = "timestamp",
     sort_desc: bool = True,
     page: Annotated[int, Query(ge=1)] = 1,
-    page_size: Annotated[int, Query(ge=5, le=100)] = 15,
+    page_size: Annotated[int, Query(ge=5, le=200)] = 25,
 ) -> AnalyticsGridResponse:
     """High-performance filtering and aggregation using Polars."""
     # Build lazy filter conditions
@@ -276,9 +287,13 @@ async def get_audit_log(current_user: CurrentUser) -> list[AuditRecord]:
             timestamp="2026-10-31 16:42",
             actor="admin@example.com",
             role="admin",
+            severity="CRITICAL",
             action="API_KEY_ROTATED",
             target="Production Cloud Gateway",
             ip_address="192.168.1.101",
+            user_agent="Chrome 130 / macOS 15.1",
+            latency_ms=18,
+            checksum="e3b0c44298fc",
             status="SUCCESS",
         ),
         AuditRecord(
@@ -286,9 +301,13 @@ async def get_audit_log(current_user: CurrentUser) -> list[AuditRecord]:
             timestamp="2026-10-31 15:10",
             actor="analyst@example.com",
             role="analyst",
+            severity="HIGH",
             action="LARGE_DATA_EXPORT",
-            target="Q3 Transaction Polars Slice",
+            target="Q3 Transaction Polars Slice (50,000 rows)",
             ip_address="192.168.1.144",
+            user_agent="Firefox 132 / Linux x86_64",
+            latency_ms=412,
+            checksum="8f434346648f",
             status="APPROVED",
         ),
         AuditRecord(
@@ -296,9 +315,13 @@ async def get_audit_log(current_user: CurrentUser) -> list[AuditRecord]:
             timestamp="2026-10-31 11:22",
             actor="viewer@example.com",
             role="viewer",
+            severity="HIGH",
             action="UNAUTHORIZED_WRITE_ATTEMPT",
-            target="/api/v1/analytics/grid",
+            target="/api/v1/analytics/grid [POST]",
             ip_address="10.0.4.88",
+            user_agent="Python-requests/2.32",
+            latency_ms=4,
+            checksum="d41d8cd98f00",
             status="BLOCKED",
         ),
         AuditRecord(
@@ -306,9 +329,125 @@ async def get_audit_log(current_user: CurrentUser) -> list[AuditRecord]:
             timestamp="2026-10-30 09:15",
             actor="admin@example.com",
             role="admin",
+            severity="CRITICAL",
             action="ROLE_POLICY_UPDATE",
-            target="RBAC Permission Matrix",
+            target="RBAC Permission Matrix (Analyst tier)",
             ip_address="192.168.1.101",
+            user_agent="Chrome 130 / macOS 15.1",
+            latency_ms=64,
+            checksum="9b71d224bd62",
+            status="SUCCESS",
+        ),
+        AuditRecord(
+            id="AUD-905",
+            timestamp="2026-10-30 08:02",
+            actor="system-daemon@service",
+            role="admin",
+            severity="INFO",
+            action="POLARS_IN_MEMORY_REINDEX",
+            target="Dataset Partition [AP-South]",
+            ip_address="127.0.0.1",
+            user_agent="Antigravity Backend Service",
+            latency_ms=8,
+            checksum="2c26b46b68ff",
+            status="SUCCESS",
+        ),
+        AuditRecord(
+            id="AUD-906",
+            timestamp="2026-10-29 23:45",
+            actor="analyst@example.com",
+            role="analyst",
+            severity="MEDIUM",
+            action="SAVED_QUERY_MUTATION",
+            target="Regional Volume Share Donut Spec",
+            ip_address="192.168.1.144",
+            user_agent="Firefox 132 / Linux x86_64",
+            latency_ms=29,
+            checksum="4b227777d4dd",
+            status="SUCCESS",
+        ),
+        AuditRecord(
+            id="AUD-907",
+            timestamp="2026-10-29 18:30",
+            actor="admin@example.com",
+            role="admin",
+            severity="MEDIUM",
+            action="SESSION_REVOCATION",
+            target="User token sess_99a8b1",
+            ip_address="192.168.1.101",
+            user_agent="Chrome 130 / macOS 15.1",
+            latency_ms=12,
+            checksum="ef2d127de37b",
+            status="SUCCESS",
+        ),
+        AuditRecord(
+            id="AUD-908",
+            timestamp="2026-10-29 14:15",
+            actor="external-bot@untrusted",
+            role="viewer",
+            severity="CRITICAL",
+            action="SQL_INJECTION_PROBE",
+            target="/api/v1/analytics/grid?search=' OR 1=1--",
+            ip_address="198.51.100.42",
+            user_agent="sqlmap/1.8.11",
+            latency_ms=2,
+            checksum="01ba4719c80b",
+            status="BLOCKED",
+        ),
+        AuditRecord(
+            id="AUD-909",
+            timestamp="2026-10-28 17:00",
+            actor="admin@example.com",
+            role="admin",
+            severity="INFO",
+            action="CONFIGURATION_BACKUP",
+            target="S3 Bucket: corp-backup-vault",
+            ip_address="192.168.1.101",
+            user_agent="CLI v2.4 (darwin-arm64)",
+            latency_ms=510,
+            checksum="a6aca6a042fa",
+            status="SUCCESS",
+        ),
+        AuditRecord(
+            id="AUD-910",
+            timestamp="2026-10-28 12:44",
+            actor="analyst@example.com",
+            role="analyst",
+            severity="LOW",
+            action="DASHBOARD_PRESET_SHARED",
+            target="Executive Quarterly View",
+            ip_address="192.168.1.144",
+            user_agent="Firefox 132 / Linux x86_64",
+            latency_ms=15,
+            checksum="132801a39b4b",
+            status="SUCCESS",
+        ),
+        AuditRecord(
+            id="AUD-911",
+            timestamp="2026-10-27 19:20",
+            actor="admin@example.com",
+            role="admin",
+            severity="CRITICAL",
+            action="MFA_DEVICE_ENROLLED",
+            target="YubiKey 5C NFC (Serial: 849201)",
+            ip_address="192.168.1.101",
+            user_agent="Chrome 130 / macOS 15.1",
+            latency_ms=75,
+            checksum="7e226d70c401",
+            status="SUCCESS",
+        ),
+        AuditRecord(
+            id="AUD-912",
+            timestamp="2026-10-27 10:11",
+            actor="system-daemon@service",
+            role="admin",
+            severity="INFO",
+            action="CACHE_WARMUP_TRIGGERED",
+            target="Plotly Chart Pre-computations",
+            ip_address="127.0.0.1",
+            user_agent="Antigravity Backend Service",
+            latency_ms=210,
+            checksum="b8a9f6004b3a",
             status="SUCCESS",
         ),
     ]

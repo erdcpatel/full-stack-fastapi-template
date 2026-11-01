@@ -34,8 +34,8 @@ function Layout() {
             <RoleSwitcher />
           </div>
         </header>
-        <main className="flex-1 p-6 md:p-8">
-          <div className="mx-auto max-w-7xl">
+        <main className="flex-1 p-4 sm:p-6 w-full min-w-0">
+          <div className="w-full">
             <Outlet />
           </div>
         </main>

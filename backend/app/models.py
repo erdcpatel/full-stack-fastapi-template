@@ -55,9 +55,13 @@ class AnalyticsRecord(BaseModel):
     id: str
     timestamp: str
     customer: str
+    tier: str
     category: str
+    channel: str
+    cluster: str
     region: str
     status: str
+    fee: float
     amount: float
     duration_ms: int
 
@@ -94,7 +98,11 @@ class AuditRecord(BaseModel):
     timestamp: str
     actor: str
     role: str
+    severity: str
     action: str
     target: str
     ip_address: str
+    user_agent: str
+    latency_ms: int
+    checksum: str
     status: str

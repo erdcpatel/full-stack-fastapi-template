@@ -4,9 +4,13 @@ export interface AnalyticsRecord {
   id: string
   timestamp: string
   customer: string
+  tier: string
   category: string
+  channel: string
+  cluster: string
   region: string
   status: "Completed" | "Processing" | "Failed" | "Refunded" | string
+  fee: number
   amount: number
   duration_ms: number
 }
@@ -43,8 +47,12 @@ export interface AuditRecord {
   timestamp: string
   actor: string
   role: string
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO" | string
   action: string
   target: string
   ip_address: string
+  user_agent: string
+  latency_ms: number
+  checksum: string
   status: string
 }
