@@ -1,9 +1,10 @@
 from datetime import datetime, timedelta
+import io
 import math
 import random
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 import plotly.express as px
 import polars as pl
 
@@ -72,6 +73,44 @@ def _generate_dataset(n: int = 600) -> pl.DataFrame:
 
 
 _DF = _generate_dataset()
+
+
+def _generate_timeseries_dataset(n: int = 20000) -> pl.DataFrame:
+    random.seed(42)
+    base = datetime(2026, 11, 1, 0, 0, 0)
+    timestamps = [(base + timedelta(seconds=i * 5)).strftime("%Y-%m-%d %H:%M:%S") for i in range(n)]
+
+    cpu = []
+    memory = []
+    network = []
+    rps = []
+    latency = []
+
+    for i in range(n):
+        wave = math.sin(i / 250.0) * 18.0
+        c = max(8.0, min(99.0, 48.0 + wave + random.gauss(0, 6.0)))
+        m = max(2048.0, min(16384.0, 8192.0 + wave * 95 + random.gauss(0, 200.0)))
+        net = max(40.0, min(1200.0, 420.0 + wave * 15 + random.gauss(0, 40.0)))
+        r = int(max(100, min(15000, 3200 + wave * 120 + random.gauss(0, 350.0))))
+        lat = max(2.0, min(120.0, 16.0 + (c / 12.0) + random.gauss(0, 2.5)))
+
+        cpu.append(round(c, 2))
+        memory.append(round(m, 1))
+        network.append(round(net, 2))
+        rps.append(r)
+        latency.append(round(lat, 2))
+
+    return pl.DataFrame({
+        "timestamp": timestamps,
+        "cpu_usage": cpu,
+        "memory_mb": memory,
+        "network_mbps": network,
+        "requests_per_sec": rps,
+        "latency_p99": latency,
+    })
+
+
+_TS_DF = _generate_timeseries_dataset()
 
 
 @router.get("/grid", response_model=AnalyticsGridResponse)
@@ -451,3 +490,33 @@ async def get_audit_log(current_user: CurrentUser) -> list[AuditRecord]:
             status="SUCCESS",
         ),
     ]
+
+
+@router.get("/arrow-metrics")
+async def get_arrow_metrics(
+    current_user: CurrentUser,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=100, le=10000)] = 2000,
+) -> Response:
+    """Streams high-volume Polars time-series data using native Apache Arrow IPC binary format."""
+    total_count = _TS_DF.height
+    total_pages = max(1, math.ceil(total_count / page_size))
+
+    start_idx = (page - 1) * page_size
+    sliced = _TS_DF.slice(start_idx, page_size)
+
+    buf = io.BytesIO()
+    sliced.write_ipc(buf)
+    ipc_bytes = buf.getvalue()
+
+    return Response(
+        content=ipc_bytes,
+        media_type="application/vnd.apache.arrow.file",
+        headers={
+            "X-Total-Count": str(total_count),
+            "X-Page": str(page),
+            "X-Page-Size": str(page_size),
+            "X-Total-Pages": str(total_pages),
+            "Access-Control-Expose-Headers": "X-Total-Count, X-Page, X-Page-Size, X-Total-Pages",
+        },
+    )

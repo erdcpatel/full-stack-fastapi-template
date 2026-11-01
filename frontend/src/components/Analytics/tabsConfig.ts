@@ -1,6 +1,7 @@
 import React from "react"
 import OverviewTab from "./OverviewTab"
 import DataGridTab from "./DataGridTab"
+import EChartsTab from "./EChartsTab"
 import ExecutiveAuditTab from "./ExecutiveAuditTab"
 import type { UserRole } from "./types"
 
@@ -19,6 +20,13 @@ export const ANALYTICS_TABS: TabConfig[] = [
     badge: "All Roles",
     allowedRoles: ["admin", "analyst", "viewer"],
     component: OverviewTab,
+  },
+  {
+    id: "echarts",
+    title: "Apache ECharts & Arrow IPC",
+    badge: "Binary Stream",
+    allowedRoles: ["admin", "analyst"],
+    component: EChartsTab,
   },
   {
     id: "grid",

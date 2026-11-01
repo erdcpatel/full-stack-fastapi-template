@@ -84,3 +84,14 @@ def test_analytics_audit_rbac(client: TestClient) -> None:
     viewer_res = client.get("/api/v1/analytics/audit", headers=viewer_headers)
     assert viewer_res.status_code == 403
     assert "Access Denied" in viewer_res.json()["detail"]
+
+
+def test_analytics_arrow_ipc_stream(client: TestClient) -> None:
+    headers = {"Authorization": "Bearer dummy-token"}
+    res = client.get("/api/v1/analytics/arrow-metrics?page=1&page_size=500", headers=headers)
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "application/vnd.apache.arrow.file"
+    assert res.content.startswith(b"ARROW1")
+    assert int(res.headers["x-total-count"]) == 20000
+    assert int(res.headers["x-page"]) == 1
+    assert int(res.headers["x-page-size"]) == 500
