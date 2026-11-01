@@ -1,88 +1,67 @@
-# Full Stack FastAPI Template
+# Lightweight FastAPI + Vite Starter (No Database / External Auth)
 
-[![Test Docker Compose](../../actions/workflows/test-docker-compose.yml/badge.svg)](../../actions/workflows/test-docker-compose.yml)
-[![Test Backend](../../actions/workflows/test-backend.yml/badge.svg)](../../actions/workflows/test-backend.yml)
+A clean, lightweight starter template with **FastAPI** on the backend and **React + Vite** on the frontend, completely free of Docker, database, and local password/user management dependencies.
 
-## Technology Stack and Features
+Authentication is designed to be delegated to an **external Auth API / Identity Provider** (e.g. Auth0, Clerk, Cognito, Firebase, or your own auth microservice).
 
-- ⚡ [**FastAPI**](https://fastapi.tiangolo.com) for the Python backend API.
-  - 🧰 [SQLModel](https://sqlmodel.tiangolo.com) for the Python SQL database interactions (ORM).
-  - 🔍 [Pydantic](https://docs.pydantic.dev), used by FastAPI, for the data validation and settings management.
-  - 💾 [PostgreSQL](https://www.postgresql.org) as the SQL database.
-- 🚀 [React](https://react.dev) for the frontend.
-  - 🧩 Built into the backend application and served by FastAPI on the same domain as the API.
-  - 💃 Using TypeScript, hooks, [Vite](https://vitejs.dev), and other parts of a modern frontend stack.
-  - 🎨 [Tailwind CSS](https://tailwindcss.com) and [shadcn/ui](https://ui.shadcn.com) for the frontend components.
-  - 🤖 An automatically generated frontend client.
-  - 🧪 [Playwright](https://playwright.dev) for end-to-end testing.
-  - 🦇 Dark mode support.
-- ☁️ [FastAPI Cloud](https://fastapicloud.com) for deployment.
-- 🐋 [Docker Compose](https://www.docker.com) for local services and self-hosted deployment.
-  - 📞 [Traefik](https://traefik.io) as a reverse proxy with automatic HTTPS.
-- 🔒 Secure password hashing by default.
-- 🔑 JWT (JSON Web Token) authentication.
-- 📫 Email-based password recovery.
-- ✉️ [React Email](https://react.email) for email templates.
-- 📬 [Mailpit](https://mailpit.axllent.org) for local email testing during development.
-- ✅ Tests with [Pytest](https://pytest.org).
-- 🏭 CI (continuous integration) and CD (continuous deployment) based on GitHub Actions.
+---
 
-### Dashboard Login
+## Architecture & Features
 
-![Dashboard login screenshot](img/login.png)
+- ⚡ **FastAPI Backend**:
+  - **Zero Database Dependency**: No PostgreSQL, SQLite, SQLAlchemy, SQLModel, or Alembic migrations.
+  - **Pure Pydantic v2**: Clean data validation and settings schemas.
+  - **External Auth Ready**: Dependency in `backend/app/api/deps.py` verifies Bearer tokens via your external Auth service URL or JWT signature.
+  - **Interactive API Documentation**: Swagger UI at `/docs` and ReDoc at `/redoc`.
+- 🚀 **React + Vite Frontend**:
+  - TypeScript, Tailwind CSS, TanStack Router & Query.
+  - Can be served directly by FastAPI or run with hot-reload via Vite.
+- 🧪 **Pytest Suite**: Fast unit and integration tests (`pytest backend/tests`).
 
-### Dashboard - Admin
+---
 
-![Admin dashboard screenshot](img/dashboard.png)
+## Quickstart
 
-### Dashboard - Items
+### 1. Run the Backend API
 
-![Items dashboard screenshot](img/dashboard-items.png)
+From the project root using your Python interpreter:
 
-### Dashboard - Dark Mode
+```bash
+/Users/dhavalpatel/workspace/venv/py313/bin/uvicorn app.main:app --reload --app-dir backend --port 8000
+```
 
-![Dark mode dashboard screenshot](img/dashboard-dark.png)
+- API Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+- Health Check: [http://localhost:8000/api/v1/utils/health-check/](http://localhost:8000/api/v1/utils/health-check/)
 
-### React Email Templates
+---
 
-![Email templates screenshot](img/react-email.png)
+### 2. Run the Frontend
 
-### Mailpit - Local Email Testing
+#### Development with Hot Reload:
+```bash
+npm --prefix frontend run dev
+```
+Open [http://localhost:5173](http://localhost:5173).
 
-![Mailpit screenshot](img/mailpit.png)
+#### Production Build (Served by FastAPI):
+```bash
+npm --prefix frontend run build
+```
+Once built, open [http://localhost:8000](http://localhost:8000) directly.
 
-### Interactive API Documentation
+---
 
-![API docs](img/docs.png)
+### 3. Run Tests
 
-## How to Use It
+```bash
+PYTHONPATH=backend /Users/dhavalpatel/workspace/venv/py313/bin/pytest backend/tests
+```
 
-Click the **Use this template** button at the top of this page to create a new repository.
+---
 
-## Backend Development
+## Configuration (`.env`)
 
-Backend docs: [backend/README.md](./backend/README.md).
-
-## Frontend Development
-
-Frontend docs: [frontend/README.md](./frontend/README.md).
-
-## Deployment
-
-FastAPI Cloud deployment: [deployment.md](./deployment.md).
-
-Self-hosted deployment with Docker Compose: [deployment-docker-compose.md](./deployment-docker-compose.md).
-
-## Development
-
-General development docs: [development.md](./development.md).
-
-This includes the local FastAPI and Vite workflow, Docker Compose services, `.env` configuration, and more.
-
-## Release Notes
-
-Check the file [release-notes.md](./release-notes.md).
-
-## License
-
-The Full Stack FastAPI Template is licensed under the terms of the MIT license.
+- `PROJECT_NAME`: Title shown in API docs.
+- `FRONTEND_HOST`: Allowed CORS origin for the Vite dev server.
+- `AUTH_API_URL`: (Optional) URL of your external auth verification endpoint. When provided, incoming tokens are verified against this URL.
+- `SECRET_KEY`: (Optional) Secret key if verifying HMAC JWT tokens locally.

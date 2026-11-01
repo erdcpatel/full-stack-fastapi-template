@@ -1,36 +1,19 @@
-from datetime import UTC, datetime, timedelta
 from typing import Any
-
 import jwt
-from pwdlib import PasswordHash
-from pwdlib.hashers.argon2 import Argon2Hasher
-from pwdlib.hashers.bcrypt import BcryptHasher
+from jwt.exceptions import InvalidTokenError
 
 from app.core.config import settings
-
-password_hash = PasswordHash(
-    (
-        Argon2Hasher(),
-        BcryptHasher(),
-    )
-)
-
 
 ALGORITHM = "HS256"
 
 
-def create_access_token(subject: str | Any, expires_delta: timedelta) -> str:
-    expire = datetime.now(UTC) + expires_delta
-    to_encode = {"exp": expire, "sub": str(subject)}
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-
-def verify_password(
-    plain_password: str, hashed_password: str
-) -> tuple[bool, str | None]:
-    return password_hash.verify_and_update(plain_password, hashed_password)
-
-
-def get_password_hash(password: str) -> str:
-    return password_hash.hash(password)
+def decode_access_token(token: str) -> dict[str, Any] | None:
+    """Decode and validate a JWT token if SECRET_KEY is configured,
+    or decode payload without verification if validating elsewhere."""
+    try:
+        if settings.SECRET_KEY:
+            return jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+        # If no secret key is provided, decode unverified payload claims
+        return jwt.decode(token, options={"verify_signature": False})
+    except InvalidTokenError:
+        return None
