@@ -39,3 +39,48 @@ def test_items_endpoints(client: TestClient) -> None:
     item = create_res.json()
     assert item["title"] == "New Item"
     assert item["owner_id"] == "demo-admin-id"
+
+
+def test_analytics_grid_with_polars(client: TestClient) -> None:
+    headers = {"Authorization": "Bearer dummy-token"}
+    res = client.get("/api/v1/analytics/grid?page=1&page_size=10", headers=headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert "items" in data
+    assert len(data["items"]) == 10
+    assert "metrics" in data
+    assert data["metrics"]["total_volume"] > 0
+    assert "facets" in data
+    assert len(data["facets"]["categories"]) > 0
+
+    # Filter with category
+    filtered = client.get("/api/v1/analytics/grid?category=AI+Inference", headers=headers)
+    assert filtered.status_code == 200
+    f_data = filtered.json()
+    assert all(item["category"] == "AI Inference" for item in f_data["items"])
+
+
+def test_analytics_charts_with_plotly(client: TestClient) -> None:
+    headers = {"Authorization": "Bearer dummy-token"}
+    res = client.get("/api/v1/analytics/charts", headers=headers)
+    assert res.status_code == 200
+    charts = res.json()
+    assert "category_chart" in charts
+    assert "region_chart" in charts
+    assert "trend_chart" in charts
+    assert "<script" in charts["category_chart"]
+
+
+def test_analytics_audit_rbac(client: TestClient) -> None:
+    # 1. Admin can access audit logs
+    admin_headers = {"Authorization": "Bearer dummy-token", "X-User-Role": "admin"}
+    admin_res = client.get("/api/v1/analytics/audit", headers=admin_headers)
+    assert admin_res.status_code == 200
+    logs = admin_res.json()
+    assert len(logs) > 0
+
+    # 2. Viewer is rejected (403 Forbidden)
+    viewer_headers = {"Authorization": "Bearer dummy-token", "X-User-Role": "viewer"}
+    viewer_res = client.get("/api/v1/analytics/audit", headers=viewer_headers)
+    assert viewer_res.status_code == 403
+    assert "Access Denied" in viewer_res.json()["detail"]

@@ -1,0 +1,314 @@
+from datetime import datetime, timedelta
+import math
+import random
+from typing import Annotated
+
+from fastapi import APIRouter, HTTPException, Query, status
+import plotly.express as px
+import polars as pl
+
+from app.api.deps import CurrentUser
+from app.models import (
+    AnalyticsFacets,
+    AnalyticsGridResponse,
+    AnalyticsMetrics,
+    AnalyticsRecord,
+    AuditRecord,
+    FacetCount,
+)
+
+router = APIRouter(prefix="/analytics", tags=["analytics"])
+
+# Generate realistic sample data once in Polars
+def _generate_dataset(n: int = 600) -> pl.DataFrame:
+    random.seed(1337)
+    categories = ["AI Inference", "Cloud Compute", "Managed DB", "Storage", "CDN & Network"]
+    regions = ["US-East", "US-West", "EU-Central", "AP-South", "AP-East"]
+    statuses = ["Completed", "Processing", "Failed", "Refunded"]
+    clients = [
+        "Acme Corp", "TechNova", "Starlight AI", "Globex", "Initech",
+        "CyberDyne", "Umbrella Bio", "Soylent", "Massive Dynamic", "Hooli",
+    ]
+
+    base_time = datetime(2026, 9, 1, 10, 0)
+    data = []
+    for i in range(n):
+        hours_offset = int(i * 1.8)
+        created = base_time + timedelta(hours=hours_offset)
+        category = random.choice(categories)
+        region = random.choice(regions)
+        status_val = random.choices(statuses, weights=[0.75, 0.12, 0.08, 0.05])[0]
+        
+        base_price = {
+            "AI Inference": random.uniform(200, 3500),
+            "Cloud Compute": random.uniform(150, 4800),
+            "Managed DB": random.uniform(300, 2900),
+            "Storage": random.uniform(40, 1200),
+            "CDN & Network": random.uniform(30, 850),
+        }[category]
+
+        data.append({
+            "id": f"TXN-{10000 + i}",
+            "timestamp": created.strftime("%Y-%m-%d %H:%M"),
+            "customer": f"{random.choice(clients)} #{random.randint(10, 99)}",
+            "category": category,
+            "region": region,
+            "status": status_val,
+            "amount": round(base_price, 2),
+            "duration_ms": random.randint(35, 1200),
+        })
+    return pl.DataFrame(data)
+
+
+_DF = _generate_dataset()
+
+
+@router.get("/grid", response_model=AnalyticsGridResponse)
+async def get_analytics_grid(
+    current_user: CurrentUser,
+    search: str | None = None,
+    category: str | None = None,
+    status: str | None = None,
+    region: str | None = None,
+    min_amount: float | None = None,
+    max_amount: float | None = None,
+    sort_by: str = "timestamp",
+    sort_desc: bool = True,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=5, le=100)] = 15,
+) -> AnalyticsGridResponse:
+    """High-performance filtering and aggregation using Polars."""
+    # Build lazy filter conditions
+    lazy_df = _DF.lazy()
+
+    if search:
+        search_lower = search.strip().lower()
+        lazy_df = lazy_df.filter(
+            pl.col("id").str.to_lowercase().str.contains(search_lower)
+            | pl.col("customer").str.to_lowercase().str.contains(search_lower)
+            | pl.col("category").str.to_lowercase().str.contains(search_lower)
+            | pl.col("region").str.to_lowercase().str.contains(search_lower)
+        )
+
+    if category and category != "all":
+        lazy_df = lazy_df.filter(pl.col("category") == category)
+
+    if status and status != "all":
+        lazy_df = lazy_df.filter(pl.col("status") == status)
+
+    if region and region != "all":
+        lazy_df = lazy_df.filter(pl.col("region") == region)
+
+    if min_amount is not None:
+        lazy_df = lazy_df.filter(pl.col("amount") >= min_amount)
+
+    if max_amount is not None:
+        lazy_df = lazy_df.filter(pl.col("amount") <= max_amount)
+
+    # Collect filtered dataset
+    filtered = lazy_df.collect()
+    total_count = filtered.height
+
+    # Compute metrics using Polars aggregations
+    if total_count > 0:
+        agg = filtered.select([
+            pl.col("amount").sum().alias("total_volume"),
+            pl.col("amount").mean().alias("avg_amount"),
+            (pl.col("status") == "Completed").mean().alias("success_rate"),
+        ]).to_dicts()[0]
+
+        metrics = AnalyticsMetrics(
+            total_volume=round(agg["total_volume"] or 0.0, 2),
+            avg_amount=round(agg["avg_amount"] or 0.0, 2),
+            total_records=total_count,
+            success_rate=round((agg["success_rate"] or 0.0) * 100, 1),
+        )
+    else:
+        metrics = AnalyticsMetrics(
+            total_volume=0.0,
+            avg_amount=0.0,
+            total_records=0,
+            success_rate=0.0,
+        )
+
+    # Compute facet counts for dropdown filters
+    cat_counts = (
+        _DF.group_by("category")
+        .len()
+        .sort("len", descending=True)
+        .to_dicts()
+    )
+    reg_counts = (
+        _DF.group_by("region")
+        .len()
+        .sort("len", descending=True)
+        .to_dicts()
+    )
+    stat_counts = (
+        _DF.group_by("status")
+        .len()
+        .sort("len", descending=True)
+        .to_dicts()
+    )
+
+    facets = AnalyticsFacets(
+        categories=[FacetCount(name=c["category"], count=c["len"]) for c in cat_counts],
+        regions=[FacetCount(name=r["region"], count=r["len"]) for r in reg_counts],
+        statuses=[FacetCount(name=s["status"], count=s["len"]) for s in stat_counts],
+    )
+
+    # Sorting
+    if sort_by in filtered.columns:
+        filtered = filtered.sort(sort_by, descending=sort_desc)
+
+    # Pagination slice
+    start_idx = (page - 1) * page_size
+    page_records = filtered.slice(start_idx, page_size).to_dicts()
+
+    total_pages = max(1, math.ceil(total_count / page_size))
+
+    return AnalyticsGridResponse(
+        items=[AnalyticsRecord(**r) for r in page_records],
+        total_count=total_count,
+        page=page,
+        total_pages=total_pages,
+        facets=facets,
+        metrics=metrics,
+    )
+
+
+@router.get("/charts")
+async def get_analytics_charts(current_user: CurrentUser) -> dict[str, str]:
+    """Generates responsive Plotly charts directly from Polars data."""
+    # 1. Revenue by Category (Bar Chart)
+    cat_df = (
+        _DF.filter(pl.col("status") == "Completed")
+        .group_by("category")
+        .agg(pl.col("amount").sum().alias("revenue"))
+        .sort("revenue", descending=True)
+        .to_pandas()
+    )
+    fig_cat = px.bar(
+        cat_df,
+        x="category",
+        y="revenue",
+        color="category",
+        template="plotly_dark",
+        title="Completed Revenue by Category ($)",
+    )
+    fig_cat.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=10, r=10, t=40, b=10),
+        showlegend=False,
+    )
+
+    # 2. Regional Volume Distribution (Donut Chart)
+    reg_df = (
+        _DF.group_by("region")
+        .agg(pl.col("amount").sum().alias("volume"))
+        .to_pandas()
+    )
+    fig_reg = px.pie(
+        reg_df,
+        names="region",
+        values="volume",
+        hole=0.45,
+        template="plotly_dark",
+        title="Transaction Volume by Region",
+    )
+    fig_reg.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=10, r=10, t=40, b=10),
+    )
+
+    # 3. Daily Volume Trend (Area/Line Chart)
+    time_df = (
+        _DF.with_columns(pl.col("timestamp").str.slice(0, 10).alias("date"))
+        .group_by("date")
+        .agg(pl.col("amount").sum().alias("daily_volume"))
+        .sort("date")
+        .to_pandas()
+    )
+    fig_trend = px.area(
+        time_df,
+        x="date",
+        y="daily_volume",
+        template="plotly_dark",
+        title="Daily Transaction Trend ($)",
+    )
+    fig_trend.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=10, r=10, t=40, b=10),
+    )
+
+    def wrap_chart(fig) -> str:
+        div = fig.to_html(include_plotlyjs=False, full_html=False)
+        return (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'/>"
+            "<script src='/plotly.min.js'></script>"
+            "<style>body{margin:0;padding:0;background:transparent;overflow:hidden;}"
+            ".plotly-graph-div{height:100% !important;width:100% !important;}</style>"
+            f"</head><body>{div}</body></html>"
+        )
+
+    return {
+        "category_chart": wrap_chart(fig_cat),
+        "region_chart": wrap_chart(fig_reg),
+        "trend_chart": wrap_chart(fig_trend),
+    }
+
+
+@router.get("/audit", response_model=list[AuditRecord])
+async def get_audit_log(current_user: CurrentUser) -> list[AuditRecord]:
+    """Sensitive executive audit table - restricted to Admin role."""
+    if current_user.role != "admin" and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access Denied: You need the 'admin' role to view Executive Audit Logs.",
+        )
+
+    return [
+        AuditRecord(
+            id="AUD-901",
+            timestamp="2026-10-31 16:42",
+            actor="admin@example.com",
+            role="admin",
+            action="API_KEY_ROTATED",
+            target="Production Cloud Gateway",
+            ip_address="192.168.1.101",
+            status="SUCCESS",
+        ),
+        AuditRecord(
+            id="AUD-902",
+            timestamp="2026-10-31 15:10",
+            actor="analyst@example.com",
+            role="analyst",
+            action="LARGE_DATA_EXPORT",
+            target="Q3 Transaction Polars Slice",
+            ip_address="192.168.1.144",
+            status="APPROVED",
+        ),
+        AuditRecord(
+            id="AUD-903",
+            timestamp="2026-10-31 11:22",
+            actor="viewer@example.com",
+            role="viewer",
+            action="UNAUTHORIZED_WRITE_ATTEMPT",
+            target="/api/v1/analytics/grid",
+            ip_address="10.0.4.88",
+            status="BLOCKED",
+        ),
+        AuditRecord(
+            id="AUD-904",
+            timestamp="2026-10-30 09:15",
+            actor="admin@example.com",
+            role="admin",
+            action="ROLE_POLICY_UPDATE",
+            target="RBAC Permission Matrix",
+            ip_address="192.168.1.101",
+            status="SUCCESS",
+        ),
+    ]

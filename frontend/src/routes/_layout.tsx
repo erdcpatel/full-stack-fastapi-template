@@ -1,6 +1,7 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router"
 
 import { Footer } from "@/components/Common/Footer"
+import { RoleSwitcher } from "@/components/Common/RoleSwitcher"
 import AppSidebar from "@/components/Sidebar/AppSidebar"
 import {
   SidebarInset,
@@ -25,8 +26,13 @@ function Layout() {
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset>
-        <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-2 border-b bg-background px-4">
-          <SidebarTrigger className="-ml-1 text-muted-foreground" />
+        <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center justify-between border-b bg-background px-4">
+          <div className="flex items-center gap-2">
+            <SidebarTrigger className="-ml-1 text-muted-foreground" />
+          </div>
+          <div className="flex items-center gap-3">
+            <RoleSwitcher />
+          </div>
         </header>
         <main className="flex-1 p-6 md:p-8">
           <div className="mx-auto max-w-7xl">
