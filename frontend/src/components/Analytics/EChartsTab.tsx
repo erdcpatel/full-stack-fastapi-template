@@ -53,16 +53,22 @@ export default function EChartsTab() {
   const [copiedCode, setCopiedCode] = useState(false)
   const [stats, setStats] = useState<ArrowStats | null>(null)
 
-  // Chart DOM refs
+  // 7 Chart DOM refs
   const streamChartRef = useRef<HTMLDivElement>(null)
+  const barLineChartRef = useRef<HTMLDivElement>(null)
+  const stackedAreaChartRef = useRef<HTMLDivElement>(null)
   const heatmapChartRef = useRef<HTMLDivElement>(null)
   const radarChartRef = useRef<HTMLDivElement>(null)
+  const candlestickChartRef = useRef<HTMLDivElement>(null)
   const gaugeChartRef = useRef<HTMLDivElement>(null)
 
-  // ECharts instances
+  // 7 ECharts instances
   const streamInstance = useRef<echarts.ECharts | null>(null)
+  const barLineInstance = useRef<echarts.ECharts | null>(null)
+  const stackedAreaInstance = useRef<echarts.ECharts | null>(null)
   const heatmapInstance = useRef<echarts.ECharts | null>(null)
   const radarInstance = useRef<echarts.ECharts | null>(null)
+  const candlestickInstance = useRef<echarts.ECharts | null>(null)
   const gaugeInstance = useRef<echarts.ECharts | null>(null)
 
   const activeRole = getActiveRole()
@@ -95,15 +101,15 @@ export default function EChartsTab() {
       const tParse = performance.now()
 
       const timestamps = Array.from(table.getChild("timestamp")!.toArray()) as string[]
-      const cpuUsage = Array.from(table.getChild("cpu_usage")!.toArray()) as number[]
-      const memoryMb = Array.from(table.getChild("memory_mb")!.toArray()) as number[]
-      const networkMbps = Array.from(table.getChild("network_mbps")!.toArray()) as number[]
-      const rps = Array.from(table.getChild("requests_per_sec")!.toArray()) as number[]
-      const latency = Array.from(table.getChild("latency_p99")!.toArray()) as number[]
+      const cpuUsage = Array.from(table.getChild("cpu_usage")!.toArray()).map(Number)
+      const memoryMb = Array.from(table.getChild("memory_mb")!.toArray()).map(Number)
+      const networkMbps = Array.from(table.getChild("network_mbps")!.toArray()).map(Number)
+      const rps = Array.from(table.getChild("requests_per_sec")!.toArray()).map(Number)
+      const latency = Array.from(table.getChild("latency_p99")!.toArray()).map(Number)
 
-      // Calculate aggregates for summary gauges
+      // Aggregates for summary gauges
       const avgCpu = Math.round(cpuUsage.reduce((a, b) => a + b, 0) / cpuUsage.length)
-      const avgMemPct = Math.round((memoryMb.reduce((a, b) => a + b, 0) / memoryMb.length / 163.84))
+      const avgMemPct = Math.round(memoryMb.reduce((a, b) => a + b, 0) / memoryMb.length / 163.84)
       const avgLatency = (latency.reduce((a, b) => a + b, 0) / latency.length).toFixed(1)
 
       setStats({
@@ -115,6 +121,35 @@ export default function EChartsTab() {
         page,
         totalPages,
       })
+
+      // Downsampled buckets for hourly/aggregated charts
+      const bucketCount = 12
+      const step = Math.max(1, Math.floor(table.numRows / bucketCount))
+      const bucketLabels: string[] = []
+      const bucketRpsSum: number[] = []
+      const bucketLatencyAvg: number[] = []
+      const candleData: [number, number, number, number][] = [] // [open, close, lowest, highest]
+
+      for (let i = 0; i < bucketCount; i++) {
+        const sliceStart = i * step
+        const sliceEnd = Math.min((i + 1) * step, table.numRows)
+        const subTimestamps = timestamps.slice(sliceStart, sliceEnd)
+        const subRps = rps.slice(sliceStart, sliceEnd)
+        const subLat = latency.slice(sliceStart, sliceEnd)
+
+        bucketLabels.push(subTimestamps[0]?.split(" ")[1] || `${i * 2}:00`)
+        const totalR = subRps.reduce((a, b) => a + b, 0)
+        bucketRpsSum.push(Math.round(totalR / subRps.length))
+
+        const avgL = subLat.length ? subLat.reduce((a, b) => a + b, 0) / subLat.length : 20
+        bucketLatencyAvg.push(Math.round(avgL * 10) / 10)
+
+        const minL = subLat.length ? Math.min(...subLat) : 10
+        const maxL = subLat.length ? Math.max(...subLat) : 40
+        const openL = subLat[0] || minL
+        const closeL = subLat[subLat.length - 1] || maxL
+        candleData.push([openL, closeL, minL, maxL])
+      }
 
       // ----------------------------------------------------
       // 1. Telemetry Stream Area/Line Chart with dataZoom
@@ -236,7 +271,171 @@ export default function EChartsTab() {
       }
 
       // ----------------------------------------------------
-      // 2. Node Latency Matrix (2D Heatmap)
+      // 2. Mixed Bar + Line Chart (Throughput Volume + Latency Curve)
+      // ----------------------------------------------------
+      if (barLineChartRef.current) {
+        if (!barLineInstance.current) {
+          barLineInstance.current = echarts.init(barLineChartRef.current, "dark", {
+            renderer: "canvas",
+          })
+        }
+
+        const option2: echarts.EChartsOption = {
+          backgroundColor: "transparent",
+          title: {
+            text: "Mixed Bar + Line: Throughput vs P99 Latency",
+            subtext: "Dual Y-Axis: Volume distribution with SLA latency trend",
+            left: 10,
+            top: 10,
+            textStyle: { color: "#f8fafc", fontSize: 12, fontWeight: "bold" },
+            subtextStyle: { color: "#94a3b8", fontSize: 10 },
+          },
+          tooltip: {
+            trigger: "axis",
+            backgroundColor: "rgba(15, 23, 42, 0.95)",
+            borderColor: "#334155",
+            textStyle: { color: "#f8fafc", fontSize: 11 },
+          },
+          legend: {
+            data: ["Request Volume (RPS)", "P99 Latency SLA (ms)"],
+            top: 10,
+            right: 10,
+            textStyle: { color: "#cbd5e1", fontSize: 11 },
+          },
+          grid: { left: 50, right: 50, top: 65, bottom: 35 },
+          xAxis: {
+            type: "category",
+            data: bucketLabels,
+            axisLine: { lineStyle: { color: "#334155" } },
+            axisLabel: { color: "#94a3b8", fontSize: 10 },
+          },
+          yAxis: [
+            {
+              type: "value",
+              name: "Volume (RPS)",
+              nameTextStyle: { color: "#94a3b8", fontSize: 10 },
+              splitLine: { lineStyle: { color: "rgba(51, 65, 85, 0.4)" } },
+              axisLabel: { color: "#94a3b8", fontSize: 10 },
+            },
+            {
+              type: "value",
+              name: "Latency (ms)",
+              nameTextStyle: { color: "#94a3b8", fontSize: 10 },
+              splitLine: { show: false },
+              axisLabel: { color: "#94a3b8", fontSize: 10 },
+            },
+          ],
+          series: [
+            {
+              name: "Request Volume (RPS)",
+              type: "bar",
+              data: bucketRpsSum,
+              itemStyle: {
+                color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                  { offset: 0, color: "#38bdf8" },
+                  { offset: 1, color: "#0284c7" },
+                ]),
+                borderRadius: [4, 4, 0, 0],
+              },
+            },
+            {
+              name: "P99 Latency SLA (ms)",
+              type: "line",
+              yAxisIndex: 1,
+              smooth: true,
+              data: bucketLatencyAvg,
+              lineStyle: { color: "#f59e0b", width: 2.5 },
+              itemStyle: { color: "#f59e0b" },
+              symbol: "circle",
+              symbolSize: 6,
+            },
+          ],
+        }
+
+        barLineInstance.current.setOption(option2, true)
+      }
+
+      // ----------------------------------------------------
+      // 3. Stacked Gradient Area Chart (Regional Cluster Load)
+      // ----------------------------------------------------
+      if (stackedAreaChartRef.current) {
+        if (!stackedAreaInstance.current) {
+          stackedAreaInstance.current = echarts.init(stackedAreaChartRef.current, "dark", {
+            renderer: "canvas",
+          })
+        }
+
+        const regions = ["US-East", "US-West", "EU-Central", "AP-South", "AP-East"]
+        const colors = ["#06b6d4", "#8b5cf6", "#10b981", "#f59e0b", "#ec4899"]
+
+        const regionalSeries = regions.map((reg, idx) => {
+          const factor = 0.6 + idx * 0.15
+          const dataPoints = bucketRpsSum.map((v, i) =>
+            Math.round(v * (0.15 + (Math.sin(i + idx) + 1) * 0.08 * factor))
+          )
+          return {
+            name: reg,
+            type: "line" as const,
+            stack: "Total",
+            smooth: true,
+            lineStyle: { width: 1.5, color: colors[idx] },
+            showSymbol: false,
+            areaStyle: {
+              opacity: 0.7,
+              color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                { offset: 0, color: colors[idx] },
+                { offset: 1, color: "rgba(15, 23, 42, 0.1)" },
+              ]),
+            },
+            emphasis: { focus: "series" as const },
+            data: dataPoints,
+          }
+        })
+
+        const option3: echarts.EChartsOption = {
+          backgroundColor: "transparent",
+          title: {
+            text: "Stacked Gradient Area: Multi-Region Workload",
+            subtext: "Cumulative traffic distribution across 5 global clusters",
+            left: 10,
+            top: 10,
+            textStyle: { color: "#f8fafc", fontSize: 12, fontWeight: "bold" },
+            subtextStyle: { color: "#94a3b8", fontSize: 10 },
+          },
+          tooltip: {
+            trigger: "axis",
+            axisPointer: { type: "cross", label: { backgroundColor: "#334155" } },
+            backgroundColor: "rgba(15, 23, 42, 0.95)",
+            borderColor: "#334155",
+            textStyle: { color: "#f8fafc", fontSize: 11 },
+          },
+          legend: {
+            data: regions,
+            top: 10,
+            right: 10,
+            textStyle: { color: "#cbd5e1", fontSize: 11 },
+          },
+          grid: { left: 50, right: 30, top: 65, bottom: 35 },
+          xAxis: {
+            type: "category",
+            boundaryGap: false,
+            data: bucketLabels,
+            axisLine: { lineStyle: { color: "#334155" } },
+            axisLabel: { color: "#94a3b8", fontSize: 10 },
+          },
+          yAxis: {
+            type: "value",
+            splitLine: { lineStyle: { color: "rgba(51, 65, 85, 0.4)" } },
+            axisLabel: { color: "#94a3b8", fontSize: 10 },
+          },
+          series: regionalSeries,
+        }
+
+        stackedAreaInstance.current.setOption(option3, true)
+      }
+
+      // ----------------------------------------------------
+      // 4. Node Latency Matrix (2D Heatmap)
       // ----------------------------------------------------
       if (heatmapChartRef.current) {
         if (!heatmapInstance.current) {
@@ -246,11 +445,10 @@ export default function EChartsTab() {
         }
 
         const nodes = ["us-east-1a", "us-east-1b", "eu-central-1a", "ap-south-1a", "ap-south-1b"]
-        const hours = Array.from({ length: 12 }, (_, i) => `${i * 2}:00`)
         const heatmapData: [number, number, number][] = []
 
         nodes.forEach((_, nIdx) => {
-          hours.forEach((_, hIdx) => {
+          bucketLabels.forEach((_, hIdx) => {
             const val = Math.round(
               15 + Math.sin((hIdx + nIdx) / 2) * 20 + ((hIdx * 7 + nIdx * 13) % 45)
             )
@@ -258,11 +456,11 @@ export default function EChartsTab() {
           })
         })
 
-        const option2: echarts.EChartsOption = {
+        const option4: echarts.EChartsOption = {
           backgroundColor: "transparent",
           title: {
-            text: "Cluster Node Latency Heatmap",
-            subtext: "2D Matrix of Response Latency across Regional Nodes",
+            text: "2D Cluster Node Latency Heatmap",
+            subtext: "Response latency matrix across regional clusters",
             left: 10,
             top: 10,
             textStyle: { color: "#f8fafc", fontSize: 12, fontWeight: "bold" },
@@ -272,7 +470,7 @@ export default function EChartsTab() {
             position: "top",
             formatter: (params: any) => {
               const [h, n, v] = params.data
-              return `<strong>${nodes[n]}</strong> @ ${hours[h]}<br/>Latency: <strong>${v} ms</strong>`
+              return `<strong>${nodes[n]}</strong> @ ${bucketLabels[h]}<br/>Latency: <strong>${v} ms</strong>`
             },
             backgroundColor: "rgba(15, 23, 42, 0.95)",
             borderColor: "#334155",
@@ -281,7 +479,7 @@ export default function EChartsTab() {
           grid: { left: 85, right: 20, top: 60, bottom: 45 },
           xAxis: {
             type: "category",
-            data: hours,
+            data: bucketLabels,
             splitArea: { show: true },
             axisLabel: { color: "#94a3b8", fontSize: 10 },
           },
@@ -316,11 +514,11 @@ export default function EChartsTab() {
           ],
         }
 
-        heatmapInstance.current.setOption(option2, true)
+        heatmapInstance.current.setOption(option4, true)
       }
 
       // ----------------------------------------------------
-      // 3. System Reliability SLA Scorecard (Radar Chart)
+      // 5. System Reliability SLA Scorecard (Radar Chart)
       // ----------------------------------------------------
       if (radarChartRef.current) {
         if (!radarInstance.current) {
@@ -329,7 +527,7 @@ export default function EChartsTab() {
           })
         }
 
-        const option3: echarts.EChartsOption = {
+        const option5: echarts.EChartsOption = {
           backgroundColor: "transparent",
           title: {
             text: "System Reliability SLA Radar",
@@ -354,7 +552,7 @@ export default function EChartsTab() {
               { name: "Security Posture", max: 100 },
             ],
             shape: "polygon",
-            radius: 70,
+            radius: 65,
             center: ["50%", "58%"],
             axisName: { color: "#94a3b8", fontSize: 10 },
             splitLine: { lineStyle: { color: "rgba(51, 65, 85, 0.6)" } },
@@ -382,11 +580,67 @@ export default function EChartsTab() {
           ],
         }
 
-        radarInstance.current.setOption(option3, true)
+        radarInstance.current.setOption(option5, true)
       }
 
       // ----------------------------------------------------
-      // 4. Real-Time Gauge Speedometers
+      // 6. Latency Envelope Candlestick / Volatility (K-Line)
+      // ----------------------------------------------------
+      if (candlestickChartRef.current) {
+        if (!candlestickInstance.current) {
+          candlestickInstance.current = echarts.init(candlestickChartRef.current, "dark", {
+            renderer: "canvas",
+          })
+        }
+
+        const option6: echarts.EChartsOption = {
+          backgroundColor: "transparent",
+          title: {
+            text: "Latency Envelope (OHLC / Candlestick)",
+            subtext: "Min, Max, P50 & P90 Latency Spreads",
+            left: 10,
+            top: 10,
+            textStyle: { color: "#f8fafc", fontSize: 12, fontWeight: "bold" },
+            subtextStyle: { color: "#94a3b8", fontSize: 10 },
+          },
+          tooltip: {
+            trigger: "axis",
+            backgroundColor: "rgba(15, 23, 42, 0.95)",
+            borderColor: "#334155",
+            textStyle: { color: "#f8fafc", fontSize: 11 },
+          },
+          grid: { left: 45, right: 20, top: 60, bottom: 35 },
+          xAxis: {
+            type: "category",
+            data: bucketLabels,
+            axisLine: { lineStyle: { color: "#334155" } },
+            axisLabel: { color: "#94a3b8", fontSize: 10 },
+          },
+          yAxis: {
+            type: "value",
+            splitLine: { lineStyle: { color: "rgba(51, 65, 85, 0.4)" } },
+            axisLabel: { color: "#94a3b8", fontSize: 10 },
+          },
+          series: [
+            {
+              name: "Latency Spread (ms)",
+              type: "candlestick",
+              data: candleData,
+              itemStyle: {
+                color: "#10b981",
+                color0: "#ef4444",
+                borderColor: "#10b981",
+                borderColor0: "#ef4444",
+              },
+            },
+          ],
+        }
+
+        candlestickInstance.current.setOption(option6, true)
+      }
+
+      // ----------------------------------------------------
+      // 7. Real-Time Gauge Speedometers
       // ----------------------------------------------------
       if (gaugeChartRef.current) {
         if (!gaugeInstance.current) {
@@ -395,11 +649,11 @@ export default function EChartsTab() {
           })
         }
 
-        const option4: echarts.EChartsOption = {
+        const option7: echarts.EChartsOption = {
           backgroundColor: "transparent",
           title: {
             text: "Core Health & Uptime Gauges",
-            subtext: `Avg Latency: ${avgLatency}ms • Current Load`,
+            subtext: `Avg Latency: ${avgLatency}ms • Real-time Saturation`,
             left: 10,
             top: 10,
             textStyle: { color: "#f8fafc", fontSize: 12, fontWeight: "bold" },
@@ -412,9 +666,9 @@ export default function EChartsTab() {
               radius: "75%",
               min: 0,
               max: 100,
-              progress: { show: true, width: 10 },
+              progress: { show: true, width: 9 },
               pointer: { show: false },
-              axisLine: { lineStyle: { width: 10, color: [[1, "rgba(51, 65, 85, 0.4)"]] } },
+              axisLine: { lineStyle: { width: 9, color: [[1, "rgba(51, 65, 85, 0.4)"]] } },
               axisTick: { show: false },
               splitLine: { show: false },
               axisLabel: { show: false },
@@ -422,18 +676,18 @@ export default function EChartsTab() {
               title: {
                 show: true,
                 offsetCenter: [0, "70%"],
-                fontSize: 11,
+                fontSize: 10,
                 color: "#94a3b8",
               },
               detail: {
                 valueAnimation: true,
                 offsetCenter: [0, "0%"],
-                fontSize: 20,
+                fontSize: 18,
                 fontWeight: "bolder",
                 formatter: "{value}%",
                 color: "#06b6d4",
               },
-              data: [{ value: avgCpu, name: "CPU Utilization" }],
+              data: [{ value: avgCpu, name: "CPU Load" }],
             },
             {
               type: "gauge",
@@ -441,9 +695,9 @@ export default function EChartsTab() {
               radius: "75%",
               min: 0,
               max: 100,
-              progress: { show: true, width: 10 },
+              progress: { show: true, width: 9 },
               pointer: { show: false },
-              axisLine: { lineStyle: { width: 10, color: [[1, "rgba(51, 65, 85, 0.4)"]] } },
+              axisLine: { lineStyle: { width: 9, color: [[1, "rgba(51, 65, 85, 0.4)"]] } },
               axisTick: { show: false },
               splitLine: { show: false },
               axisLabel: { show: false },
@@ -451,23 +705,23 @@ export default function EChartsTab() {
               title: {
                 show: true,
                 offsetCenter: [0, "70%"],
-                fontSize: 11,
+                fontSize: 10,
                 color: "#94a3b8",
               },
               detail: {
                 valueAnimation: true,
                 offsetCenter: [0, "0%"],
-                fontSize: 20,
+                fontSize: 18,
                 fontWeight: "bolder",
                 formatter: "{value}%",
                 color: "#10b981",
               },
-              data: [{ value: avgMemPct, name: "Memory Usage" }],
+              data: [{ value: avgMemPct, name: "Memory %" }],
             },
           ],
         }
 
-        gaugeInstance.current.setOption(option4, true)
+        gaugeInstance.current.setOption(option7, true)
       }
     } catch (err) {
       console.error("Error in Arrow IPC loading:", err)
@@ -493,16 +747,22 @@ export default function EChartsTab() {
   useEffect(() => {
     const handleResize = () => {
       streamInstance.current?.resize()
+      barLineInstance.current?.resize()
+      stackedAreaInstance.current?.resize()
       heatmapInstance.current?.resize()
       radarInstance.current?.resize()
+      candlestickInstance.current?.resize()
       gaugeInstance.current?.resize()
     }
     window.addEventListener("resize", handleResize)
     return () => {
       window.removeEventListener("resize", handleResize)
       streamInstance.current?.dispose()
+      barLineInstance.current?.dispose()
+      stackedAreaInstance.current?.dispose()
       heatmapInstance.current?.dispose()
       radarInstance.current?.dispose()
+      candlestickInstance.current?.dispose()
       gaugeInstance.current?.dispose()
     }
   }, [])
@@ -542,11 +802,11 @@ myChart.setOption({
                 Apache ECharts Operations Suite
               </h2>
               <Badge variant="outline" className="bg-cyan-500/10 text-cyan-400 border-cyan-500/30 text-[10px] font-mono">
-                APACHE ARROW IPC
+                7 DIVERSE VISUALIZATIONS
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              4 complementary Canvas visualizations powered by Polars Feather / IPC binary stream
+              Line, Mixed Bar+Line, Stacked Area, Heatmap, Radar, Candlestick & Gauges via Polars Arrow IPC
             </p>
           </div>
         </div>
@@ -632,31 +892,55 @@ myChart.setOption({
         </div>
       </div>
 
-      {/* Row 1: High-Frequency Telemetry Stream (Full Width Hero Chart) */}
+      {/* Row 1: High-Frequency Telemetry Stream (Hero Chart with dataZoom) */}
       <Card className="overflow-hidden border-border/80 bg-card/30 backdrop-blur w-full">
         <CardContent className="p-3">
           <div ref={streamChartRef} className="w-full h-[320px]" />
         </CardContent>
       </Card>
 
-      {/* Row 2: 3-Chart Operations Matrix (Heatmap + Radar + Gauges) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 w-full">
-        {/* Chart 2: 2D Node Latency Heatmap */}
+      {/* Row 2: Mixed Bar+Line & Stacked Area (2 Columns) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 w-full">
+        {/* Chart 2: Mixed Bar + Line Dual Axis */}
+        <Card className="overflow-hidden border-border/80 bg-card/30 backdrop-blur">
+          <CardContent className="p-3">
+            <div ref={barLineChartRef} className="w-full h-[270px]" />
+          </CardContent>
+        </Card>
+
+        {/* Chart 3: Stacked Gradient Area */}
+        <Card className="overflow-hidden border-border/80 bg-card/30 backdrop-blur">
+          <CardContent className="p-3">
+            <div ref={stackedAreaChartRef} className="w-full h-[270px]" />
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Row 3: Heatmap + Radar + Candlestick + Gauges (4 Columns) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 w-full">
+        {/* Chart 4: 2D Node Latency Heatmap */}
         <Card className="overflow-hidden border-border/80 bg-card/30 backdrop-blur">
           <CardContent className="p-3">
             <div ref={heatmapChartRef} className="w-full h-[250px]" />
           </CardContent>
         </Card>
 
-        {/* Chart 3: Reliability SLA Radar */}
+        {/* Chart 5: Reliability SLA Radar */}
         <Card className="overflow-hidden border-border/80 bg-card/30 backdrop-blur">
           <CardContent className="p-3">
             <div ref={radarChartRef} className="w-full h-[250px]" />
           </CardContent>
         </Card>
 
-        {/* Chart 4: Core Health & Uptime Gauges */}
-        <Card className="overflow-hidden border-border/80 bg-card/30 backdrop-blur md:col-span-2 lg:col-span-1">
+        {/* Chart 6: Latency Envelope Candlestick */}
+        <Card className="overflow-hidden border-border/80 bg-card/30 backdrop-blur">
+          <CardContent className="p-3">
+            <div ref={candlestickChartRef} className="w-full h-[250px]" />
+          </CardContent>
+        </Card>
+
+        {/* Chart 7: Core Health & Uptime Gauges */}
+        <Card className="overflow-hidden border-border/80 bg-card/30 backdrop-blur">
           <CardContent className="p-3">
             <div ref={gaugeChartRef} className="w-full h-[250px]" />
           </CardContent>
