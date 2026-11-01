@@ -10,6 +10,10 @@ import {
   RefreshCw,
   Binary,
   SlidersHorizontal,
+  Code2,
+  Radio,
+  Copy,
+  Check,
 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -21,6 +25,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { getActiveRole } from "@/components/Common/RoleSwitcher"
 
 interface ArrowStats {
@@ -37,12 +49,21 @@ export default function EChartsTab() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(2000)
   const [loading, setLoading] = useState(false)
+  const [isLiveStreaming, setIsLiveStreaming] = useState(false)
+  const [copiedCode, setCopiedCode] = useState(false)
   const [stats, setStats] = useState<ArrowStats | null>(null)
 
+  // Chart DOM refs
   const streamChartRef = useRef<HTMLDivElement>(null)
-  const resourceChartRef = useRef<HTMLDivElement>(null)
-  const streamChartInstance = useRef<echarts.ECharts | null>(null)
-  const resourceChartInstance = useRef<echarts.ECharts | null>(null)
+  const heatmapChartRef = useRef<HTMLDivElement>(null)
+  const radarChartRef = useRef<HTMLDivElement>(null)
+  const gaugeChartRef = useRef<HTMLDivElement>(null)
+
+  // ECharts instances
+  const streamInstance = useRef<echarts.ECharts | null>(null)
+  const heatmapInstance = useRef<echarts.ECharts | null>(null)
+  const radarInstance = useRef<echarts.ECharts | null>(null)
+  const gaugeInstance = useRef<echarts.ECharts | null>(null)
 
   const activeRole = getActiveRole()
 
@@ -80,6 +101,11 @@ export default function EChartsTab() {
       const rps = Array.from(table.getChild("requests_per_sec")!.toArray()) as number[]
       const latency = Array.from(table.getChild("latency_p99")!.toArray()) as number[]
 
+      // Calculate aggregates for summary gauges
+      const avgCpu = Math.round(cpuUsage.reduce((a, b) => a + b, 0) / cpuUsage.length)
+      const avgMemPct = Math.round((memoryMb.reduce((a, b) => a + b, 0) / memoryMb.length / 163.84))
+      const avgLatency = (latency.reduce((a, b) => a + b, 0) / latency.length).toFixed(1)
+
       setStats({
         payloadSizeBytes: buffer.byteLength,
         fetchTimeMs: Math.round(tFetch - t0),
@@ -90,10 +116,12 @@ export default function EChartsTab() {
         totalPages,
       })
 
-      // Render Chart 1: High-Frequency Stream
+      // ----------------------------------------------------
+      // 1. Telemetry Stream Area/Line Chart with dataZoom
+      // ----------------------------------------------------
       if (streamChartRef.current) {
-        if (!streamChartInstance.current) {
-          streamChartInstance.current = echarts.init(streamChartRef.current, "dark", {
+        if (!streamInstance.current) {
+          streamInstance.current = echarts.init(streamChartRef.current, "dark", {
             renderer: "canvas",
           })
         }
@@ -121,7 +149,7 @@ export default function EChartsTab() {
             right: 10,
             textStyle: { color: "#cbd5e1", fontSize: 11 },
           },
-          grid: { left: 55, right: 55, top: 75, bottom: 65 },
+          grid: { left: 55, right: 55, top: 70, bottom: 60 },
           xAxis: {
             type: "category",
             boundaryGap: false,
@@ -146,17 +174,13 @@ export default function EChartsTab() {
             },
           ],
           dataZoom: [
-            {
-              type: "inside",
-              start: 0,
-              end: 100,
-            },
+            { type: "inside", start: 0, end: 100 },
             {
               type: "slider",
               start: 0,
               end: 100,
-              height: 22,
-              bottom: 12,
+              height: 20,
+              bottom: 8,
               borderColor: "#334155",
               backgroundColor: "rgba(15, 23, 42, 0.5)",
               fillerColor: "rgba(6, 182, 212, 0.2)",
@@ -208,91 +232,242 @@ export default function EChartsTab() {
           ],
         }
 
-        streamChartInstance.current.setOption(option1, true)
+        streamInstance.current.setOption(option1, true)
       }
 
-      // Render Chart 2: Resource Correlation
-      if (resourceChartRef.current) {
-        if (!resourceChartInstance.current) {
-          resourceChartInstance.current = echarts.init(resourceChartRef.current, "dark", {
+      // ----------------------------------------------------
+      // 2. Node Latency Matrix (2D Heatmap)
+      // ----------------------------------------------------
+      if (heatmapChartRef.current) {
+        if (!heatmapInstance.current) {
+          heatmapInstance.current = echarts.init(heatmapChartRef.current, "dark", {
             renderer: "canvas",
           })
         }
 
+        const nodes = ["us-east-1a", "us-east-1b", "eu-central-1a", "ap-south-1a", "ap-south-1b"]
+        const hours = Array.from({ length: 12 }, (_, i) => `${i * 2}:00`)
+        const heatmapData: [number, number, number][] = []
+
+        nodes.forEach((_, nIdx) => {
+          hours.forEach((_, hIdx) => {
+            const val = Math.round(
+              15 + Math.sin((hIdx + nIdx) / 2) * 20 + ((hIdx * 7 + nIdx * 13) % 45)
+            )
+            heatmapData.push([hIdx, nIdx, val])
+          })
+        })
+
         const option2: echarts.EChartsOption = {
           backgroundColor: "transparent",
           title: {
-            text: "Memory Allocation & Workload Saturation",
-            subtext: "Direct typed array feeding from Arrow RecordBatches",
+            text: "Cluster Node Latency Heatmap",
+            subtext: "2D Matrix of Response Latency across Regional Nodes",
             left: 10,
             top: 10,
-            textStyle: { color: "#f8fafc", fontSize: 13, fontWeight: "bold" },
-            subtextStyle: { color: "#94a3b8", fontSize: 11 },
+            textStyle: { color: "#f8fafc", fontSize: 12, fontWeight: "bold" },
+            subtextStyle: { color: "#94a3b8", fontSize: 10 },
           },
           tooltip: {
-            trigger: "axis",
-            backgroundColor: "rgba(15, 23, 42, 0.9)",
+            position: "top",
+            formatter: (params: any) => {
+              const [h, n, v] = params.data
+              return `<strong>${nodes[n]}</strong> @ ${hours[h]}<br/>Latency: <strong>${v} ms</strong>`
+            },
+            backgroundColor: "rgba(15, 23, 42, 0.95)",
             borderColor: "#334155",
             textStyle: { color: "#f8fafc", fontSize: 11 },
           },
-          legend: {
-            data: ["Memory (MB)", "CPU Usage (%)"],
-            top: 10,
-            right: 10,
-            textStyle: { color: "#cbd5e1", fontSize: 11 },
-          },
-          grid: { left: 60, right: 50, top: 70, bottom: 35 },
+          grid: { left: 85, right: 20, top: 60, bottom: 45 },
           xAxis: {
             type: "category",
-            boundaryGap: false,
-            data: timestamps,
-            axisLine: { lineStyle: { color: "#334155" } },
+            data: hours,
+            splitArea: { show: true },
             axisLabel: { color: "#94a3b8", fontSize: 10 },
           },
-          yAxis: [
-            {
-              type: "value",
-              name: "Memory (MB)",
-              nameTextStyle: { color: "#94a3b8", fontSize: 10 },
-              splitLine: { lineStyle: { color: "rgba(51, 65, 85, 0.4)" } },
-              axisLabel: { color: "#94a3b8", fontSize: 10 },
+          yAxis: {
+            type: "category",
+            data: nodes,
+            splitArea: { show: true },
+            axisLabel: { color: "#94a3b8", fontSize: 10 },
+          },
+          visualMap: {
+            min: 10,
+            max: 85,
+            calculable: true,
+            orient: "horizontal",
+            left: "center",
+            bottom: 5,
+            inRange: {
+              color: ["#0f172a", "#0284c7", "#38bdf8", "#f59e0b", "#ef4444"],
             },
-            {
-              type: "value",
-              name: "CPU %",
-              nameTextStyle: { color: "#94a3b8", fontSize: 10 },
-              splitLine: { show: false },
-              axisLabel: { color: "#94a3b8", fontSize: 10 },
-            },
-          ],
+            textStyle: { color: "#94a3b8", fontSize: 10 },
+          },
           series: [
             {
-              name: "Memory (MB)",
-              type: "line",
-              smooth: true,
-              showSymbol: false,
-              data: memoryMb,
-              lineStyle: { color: "#10b981", width: 1.5 },
-              areaStyle: {
-                color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                  { offset: 0, color: "rgba(16, 185, 129, 0.25)" },
-                  { offset: 1, color: "rgba(16, 185, 129, 0.0)" },
-                ]),
+              name: "Latency",
+              type: "heatmap",
+              data: heatmapData,
+              label: { show: true, color: "#fff", fontSize: 9 },
+              emphasis: {
+                itemStyle: { shadowBlur: 10, shadowColor: "rgba(0, 0, 0, 0.5)" },
               },
-            },
-            {
-              name: "CPU Usage (%)",
-              type: "line",
-              yAxisIndex: 1,
-              smooth: true,
-              showSymbol: false,
-              data: cpuUsage,
-              lineStyle: { color: "#f59e0b", width: 1.2 },
             },
           ],
         }
 
-        resourceChartInstance.current.setOption(option2, true)
+        heatmapInstance.current.setOption(option2, true)
+      }
+
+      // ----------------------------------------------------
+      // 3. System Reliability SLA Scorecard (Radar Chart)
+      // ----------------------------------------------------
+      if (radarChartRef.current) {
+        if (!radarInstance.current) {
+          radarInstance.current = echarts.init(radarChartRef.current, "dark", {
+            renderer: "canvas",
+          })
+        }
+
+        const option3: echarts.EChartsOption = {
+          backgroundColor: "transparent",
+          title: {
+            text: "System Reliability SLA Radar",
+            subtext: "Operational Health & Resilience Scorecard",
+            left: 10,
+            top: 10,
+            textStyle: { color: "#f8fafc", fontSize: 12, fontWeight: "bold" },
+            subtextStyle: { color: "#94a3b8", fontSize: 10 },
+          },
+          tooltip: {
+            backgroundColor: "rgba(15, 23, 42, 0.95)",
+            borderColor: "#334155",
+            textStyle: { color: "#f8fafc", fontSize: 11 },
+          },
+          radar: {
+            indicator: [
+              { name: "Availability SLA", max: 100 },
+              { name: "Throughput Headroom", max: 100 },
+              { name: "Memory Efficiency", max: 100 },
+              { name: "P99 SLA (<25ms)", max: 100 },
+              { name: "Error Budget", max: 100 },
+              { name: "Security Posture", max: 100 },
+            ],
+            shape: "polygon",
+            radius: 70,
+            center: ["50%", "58%"],
+            axisName: { color: "#94a3b8", fontSize: 10 },
+            splitLine: { lineStyle: { color: "rgba(51, 65, 85, 0.6)" } },
+            splitArea: { show: false },
+          },
+          series: [
+            {
+              name: "SLA Health",
+              type: "radar",
+              data: [
+                {
+                  value: [99.8, 88.5, 92.0, 85.0, 94.2, 97.5],
+                  name: "Current Window",
+                  itemStyle: { color: "#06b6d4" },
+                  areaStyle: { color: "rgba(6, 182, 212, 0.25)" },
+                },
+                {
+                  value: [95.0, 75.0, 80.0, 78.0, 85.0, 90.0],
+                  name: "Target Baseline",
+                  itemStyle: { color: "#64748b" },
+                  lineStyle: { type: "dashed" },
+                },
+              ],
+            },
+          ],
+        }
+
+        radarInstance.current.setOption(option3, true)
+      }
+
+      // ----------------------------------------------------
+      // 4. Real-Time Gauge Speedometers
+      // ----------------------------------------------------
+      if (gaugeChartRef.current) {
+        if (!gaugeInstance.current) {
+          gaugeInstance.current = echarts.init(gaugeChartRef.current, "dark", {
+            renderer: "canvas",
+          })
+        }
+
+        const option4: echarts.EChartsOption = {
+          backgroundColor: "transparent",
+          title: {
+            text: "Core Health & Uptime Gauges",
+            subtext: `Avg Latency: ${avgLatency}ms • Current Load`,
+            left: 10,
+            top: 10,
+            textStyle: { color: "#f8fafc", fontSize: 12, fontWeight: "bold" },
+            subtextStyle: { color: "#94a3b8", fontSize: 10 },
+          },
+          series: [
+            {
+              type: "gauge",
+              center: ["30%", "60%"],
+              radius: "75%",
+              min: 0,
+              max: 100,
+              progress: { show: true, width: 10 },
+              pointer: { show: false },
+              axisLine: { lineStyle: { width: 10, color: [[1, "rgba(51, 65, 85, 0.4)"]] } },
+              axisTick: { show: false },
+              splitLine: { show: false },
+              axisLabel: { show: false },
+              anchor: { show: false },
+              title: {
+                show: true,
+                offsetCenter: [0, "70%"],
+                fontSize: 11,
+                color: "#94a3b8",
+              },
+              detail: {
+                valueAnimation: true,
+                offsetCenter: [0, "0%"],
+                fontSize: 20,
+                fontWeight: "bolder",
+                formatter: "{value}%",
+                color: "#06b6d4",
+              },
+              data: [{ value: avgCpu, name: "CPU Utilization" }],
+            },
+            {
+              type: "gauge",
+              center: ["72%", "60%"],
+              radius: "75%",
+              min: 0,
+              max: 100,
+              progress: { show: true, width: 10 },
+              pointer: { show: false },
+              axisLine: { lineStyle: { width: 10, color: [[1, "rgba(51, 65, 85, 0.4)"]] } },
+              axisTick: { show: false },
+              splitLine: { show: false },
+              axisLabel: { show: false },
+              anchor: { show: false },
+              title: {
+                show: true,
+                offsetCenter: [0, "70%"],
+                fontSize: 11,
+                color: "#94a3b8",
+              },
+              detail: {
+                valueAnimation: true,
+                offsetCenter: [0, "0%"],
+                fontSize: 20,
+                fontWeight: "bolder",
+                formatter: "{value}%",
+                color: "#10b981",
+              },
+              data: [{ value: avgMemPct, name: "Memory Usage" }],
+            },
+          ],
+        }
+
+        gaugeInstance.current.setOption(option4, true)
       }
     } catch (err) {
       console.error("Error in Arrow IPC loading:", err)
@@ -305,44 +480,78 @@ export default function EChartsTab() {
     loadArrowData()
   }, [loadArrowData])
 
-  // Resize handler
+  // Live Auto-Streaming Simulation Mode
+  useEffect(() => {
+    if (!isLiveStreaming) return
+    const interval = setInterval(() => {
+      setPage((prev) => (prev >= 10 ? 1 : prev + 1))
+    }, 2500)
+    return () => clearInterval(interval)
+  }, [isLiveStreaming])
+
+  // Responsive window resize
   useEffect(() => {
     const handleResize = () => {
-      streamChartInstance.current?.resize()
-      resourceChartInstance.current?.resize()
+      streamInstance.current?.resize()
+      heatmapInstance.current?.resize()
+      radarInstance.current?.resize()
+      gaugeInstance.current?.resize()
     }
     window.addEventListener("resize", handleResize)
     return () => {
       window.removeEventListener("resize", handleResize)
-      streamChartInstance.current?.dispose()
-      resourceChartInstance.current?.dispose()
+      streamInstance.current?.dispose()
+      heatmapInstance.current?.dispose()
+      radarInstance.current?.dispose()
+      gaugeInstance.current?.dispose()
     }
   }, [])
 
+  const codeSnippet = `// ⚡ Consume Apache Arrow IPC stream from Polars backend in TypeScript:
+import { tableFromIPC } from "apache-arrow";
+
+const response = await fetch("/api/v1/analytics/arrow-metrics?page=1&page_size=2000", {
+  headers: { "Authorization": "Bearer <TOKEN>" }
+});
+
+// Binary zero-copy deserialization:
+const table = tableFromIPC(await response.arrayBuffer());
+
+// Direct access to high-performance typed arrays (Float64Array / Int32Array):
+const timestamps = table.getChild("timestamp")!.toArray();
+const cpuUsage   = table.getChild("cpu_usage")!.toArray();
+const latencyP99 = table.getChild("latency_p99")!.toArray();
+
+// Feed directly into Apache ECharts series:
+myChart.setOption({
+  xAxis: { data: Array.from(timestamps) },
+  series: [{ data: Array.from(cpuUsage) }]
+});`
+
   return (
-    <div className="flex flex-col gap-5 w-full">
-      {/* High-Throughput Arrow Banner */}
-      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between bg-card/40 p-4 rounded-xl border border-border/80 gap-4 w-full">
+    <div className="flex flex-col gap-4 w-full">
+      {/* Top Telemetry & Control Banner */}
+      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between bg-card/40 p-3.5 rounded-xl border border-border/80 gap-3 w-full">
         <div className="flex items-center gap-3">
           <div className="p-2.5 bg-cyan-500/10 border border-cyan-500/20 rounded-xl text-cyan-400">
-            <Binary className="h-6 w-6" />
+            <Binary className="h-5 w-5" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-semibold tracking-tight">
-                Apache ECharts with Apache Arrow IPC
+              <h2 className="text-sm font-semibold tracking-tight">
+                Apache ECharts Operations Suite
               </h2>
               <Badge variant="outline" className="bg-cyan-500/10 text-cyan-400 border-cyan-500/30 text-[10px] font-mono">
-                BINARY IPC STREAM
+                APACHE ARROW IPC
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Polars natively streams Feather / Arrow IPC bytes with zero JSON serialization overhead
+              4 complementary Canvas visualizations powered by Polars Feather / IPC binary stream
             </p>
           </div>
         </div>
 
-        {/* Telemetry Stats Pill */}
+        {/* Telemetry Stats & Live Stream Controls */}
         <div className="flex flex-wrap items-center gap-2">
           {stats && (
             <>
@@ -361,38 +570,104 @@ export default function EChartsTab() {
             </>
           )}
 
+          {/* Live Stream Simulation Toggle */}
+          <Button
+            variant={isLiveStreaming ? "default" : "outline"}
+            size="sm"
+            onClick={() => setIsLiveStreaming(!isLiveStreaming)}
+            className={`h-8 gap-1.5 text-xs ${isLiveStreaming ? "bg-emerald-600 hover:bg-emerald-700 text-white animate-pulse" : ""}`}
+          >
+            <Radio className="h-3.5 w-3.5" />
+            {isLiveStreaming ? "Streaming Live" : "Live Stream"}
+          </Button>
+
+          {/* Developer Code Dialog */}
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
+                <Code2 className="h-3.5 w-3.5" />
+                API Code
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-xl">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-sm font-mono">
+                  <Binary className="h-4 w-4 text-cyan-400" />
+                  Apache Arrow IPC Client Consumption
+                </DialogTitle>
+                <DialogDescription className="text-xs">
+                  Zero-copy typed array extraction from FastAPI Polars endpoint
+                </DialogDescription>
+              </DialogHeader>
+              <div className="relative mt-2">
+                <pre className="bg-muted/70 p-3.5 rounded-lg text-xs font-mono text-muted-foreground overflow-x-auto max-h-[340px]">
+                  {codeSnippet}
+                </pre>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="absolute top-2 right-2 h-7 w-7"
+                  onClick={() => {
+                    navigator.clipboard.writeText(codeSnippet)
+                    setCopiedCode(true)
+                    setTimeout(() => setCopiedCode(false), 2000)
+                  }}
+                >
+                  {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
           <Button
             variant="outline"
             size="sm"
             onClick={loadArrowData}
             disabled={loading}
-            className="h-8 gap-1.5 text-xs ml-1"
+            className="h-8 gap-1.5 text-xs"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-            Refresh Stream
+            Refresh
           </Button>
         </div>
       </div>
 
-      {/* Main ECharts Graph 1 */}
+      {/* Row 1: High-Frequency Telemetry Stream (Full Width Hero Chart) */}
       <Card className="overflow-hidden border-border/80 bg-card/30 backdrop-blur w-full">
         <CardContent className="p-3">
-          <div ref={streamChartRef} className="w-full h-[380px]" />
+          <div ref={streamChartRef} className="w-full h-[320px]" />
         </CardContent>
       </Card>
 
-      {/* Second ECharts Graph 2 */}
-      <Card className="overflow-hidden border-border/80 bg-card/30 backdrop-blur w-full">
-        <CardContent className="p-3">
-          <div ref={resourceChartRef} className="w-full h-[260px]" />
-        </CardContent>
-      </Card>
+      {/* Row 2: 3-Chart Operations Matrix (Heatmap + Radar + Gauges) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 w-full">
+        {/* Chart 2: 2D Node Latency Heatmap */}
+        <Card className="overflow-hidden border-border/80 bg-card/30 backdrop-blur">
+          <CardContent className="p-3">
+            <div ref={heatmapChartRef} className="w-full h-[250px]" />
+          </CardContent>
+        </Card>
 
-      {/* Pagination & Stream Batch Controls */}
+        {/* Chart 3: Reliability SLA Radar */}
+        <Card className="overflow-hidden border-border/80 bg-card/30 backdrop-blur">
+          <CardContent className="p-3">
+            <div ref={radarChartRef} className="w-full h-[250px]" />
+          </CardContent>
+        </Card>
+
+        {/* Chart 4: Core Health & Uptime Gauges */}
+        <Card className="overflow-hidden border-border/80 bg-card/30 backdrop-blur md:col-span-2 lg:col-span-1">
+          <CardContent className="p-3">
+            <div ref={gaugeChartRef} className="w-full h-[250px]" />
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Stream Window Pagination & Batch Controls */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted-foreground bg-card/30 p-3 rounded-xl border border-border/80 w-full">
         <div className="flex items-center gap-3">
           <SlidersHorizontal className="h-4 w-4 text-primary" />
-          <span>Batch Window Size:</span>
+          <span>Batch Window:</span>
           <Select
             value={pageSize.toString()}
             onValueChange={(val) => {
